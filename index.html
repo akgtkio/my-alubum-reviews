@@ -106,14 +106,6 @@
         let allReviewsData = []; 
         let isFirestoreReady = false; 
 
-        // 必須のグローバル変数を取得
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        const COLLECTION_NAME = 'reviews';
-        const FALLBACK_IMAGE_URL = 'https://placehold.co/100x100/374151/E5E7EB?text=Cover';
-
         // DOM要素の参照
         const form = document.getElementById('album-review-form');
         const reviewsList = document.getElementById('reviews-list');
@@ -123,38 +115,48 @@
         const searchArtistInput = document.getElementById('search-artist');
         const userInfoDisplay = document.getElementById('user-info');
         const submitButton = document.getElementById('submit-button');
+        
+        const COLLECTION_NAME = 'reviews';
+        const FALLBACK_IMAGE_URL = 'https://placehold.co/100x100/374151/E5E7EB?text=Cover';
 
         // ==========================================================
         // Firebase初期化と認証
         // ==========================================================
         async function initializeFirebase() {
-            console.log("--- Firebase Initialization Debug Start ---");
-            console.log("App ID:", appId);
-            console.log("Firebase Config:", Object.keys(firebaseConfig).length > 0 ? "Received" : "Missing/Empty");
-            console.log("Initial Auth Token Status:", initialAuthToken ? "Received" : "Missing (Attempting Anonymous Sign-In if possible)");
-            console.log("--- Firebase Initialization Debug End ---");
+            // 必須のグローバル変数を取得し、未定義の場合はフォールバック
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            // JSON.parseが失敗する可能性があるため、try/catchで保護
+            let firebaseConfig = {};
+            try {
+                firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            } catch (e) {
+                console.error("Error parsing __firebase_config:", e);
+                // firebaseConfigは空のまま
+            }
+            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-            // 🚨 Check 1: Missing environment variables (設定不足)
-            const configIsMissing = Object.keys(firebaseConfig).length === 0;
+            const configIsMissing = Object.keys(firebaseConfig).length === 0 || !firebaseConfig.projectId;
 
             if (configIsMissing) {
-                console.error("Firebase Configuration is empty. Cannot initialize Firebase.");
-                userInfoDisplay.textContent = '【致命的なエラー】Firebase接続設定情報が不足しています。';
-                noReviewsMessage.textContent = 'Firebaseの設定情報がないため、レビューの同期はできません。';
+                // 🚨 設定情報不足のエラー処理
+                console.error("致命的なエラー: Firebase Configurationが見つからないか、不完全です。");
+                userInfoDisplay.className = 'text-red-400 font-bold mt-2 p-2 bg-red-900 bg-opacity-30 rounded-lg';
+                userInfoDisplay.textContent = '【致命的な設定エラー】データ同期設定が見つかりません。投稿・編集はできません。';
+                noReviewsMessage.textContent = 'データ接続がないため、レビューの同期はできません。';
                 submitButton.disabled = true;
-                submitButton.textContent = '致命的エラー (投稿不可)';
+                submitButton.textContent = '設定エラー (投稿不可)';
                 submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
                 submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
                 isFirestoreReady = false;
                 return;
             }
             
+            // 正常な初期化と認証
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 const auth = getAuth(app); 
                 
-                // 認証ロジック
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
@@ -164,7 +166,7 @@
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         const reviewsCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
-                        setupRealtimeListener(reviewsCollectionRef);
+                        setupRealtimeListener(reviewsCollectionRef, user.uid); // UIDを渡してデバッグ情報を強化
                         isFirestoreReady = true;
                         
                         // 準備完了後、投稿ボタンを有効化
@@ -174,7 +176,7 @@
                         submitButton.classList.add('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
 
                     } else {
-                        // Check 2: Authentication failed (認証失敗)
+                        // 認証失敗
                         userInfoDisplay.textContent = 'エラー: 認証に失敗しました。データ同期はできません。';
                         submitButton.disabled = true;
                         submitButton.textContent = '認証失敗 - 投稿不可'; 
@@ -185,8 +187,9 @@
                 });
 
             } catch (error) {
-                // Check 3: Initialization error (初期化エラー)
+                // 初期化または認証プロセスでのエラー
                 console.error("Firebase Initialization/Authentication Error:", error);
+                userInfoDisplay.className = 'text-red-400 font-bold mt-2 p-2 bg-red-900 bg-opacity-30 rounded-lg';
                 userInfoDisplay.textContent = `エラーが発生しました: ${error.message} データ同期はできません。`;
                 submitButton.disabled = true;
                 submitButton.textContent = '初期化エラー - 投稿不可'; 
@@ -199,7 +202,7 @@
         /**
          * Firestoreのリアルタイムリスナーを設定する
          */
-        function setupRealtimeListener(reviewsCollectionRef) {
+        function setupRealtimeListener(reviewsCollectionRef, userId) {
             
             const reviewsQuery = query(reviewsCollectionRef);
             
@@ -219,7 +222,8 @@
                 });
                 
                 renderReviews(); 
-                userInfoDisplay.textContent = 'データ同期完了：すべてのデバイスでデータが共有されます。';
+                userInfoDisplay.className = 'text-green-400 mt-2';
+                userInfoDisplay.textContent = `同期完了 (User ID: ${userId})：データはすべてのデバイスで共有されます。`;
                 showMessage('レビューデータが同期されました。', 'bg-blue-900 text-blue-300');
             }, (error) => {
                 console.error("Firestore real-time listener error:", error);
@@ -433,6 +437,7 @@
                 return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
             }
 
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // 内部で再取得
             const reviewId = event.target.dataset.id;
             const reviewDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME, reviewId);
             
@@ -481,7 +486,8 @@
                 console.error("Database not ready for submit.");
                 return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
             }
-
+            
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // 内部で再取得
             const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
             const title = document.getElementById('album-title').value.trim();
             const artist = document.getElementById('artist-name').value.trim();
@@ -540,6 +546,7 @@
                 return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
             }
 
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // 内部で再取得
             const reviewId = event.target.dataset.id;
             
             showCustomModal("レビューを削除しますか？", async () => {
