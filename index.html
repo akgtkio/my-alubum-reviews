@@ -21,7 +21,7 @@
             <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight text-indigo-400">
                 マイ・アルバム・レビュー
             </h1>
-            <p id="user-info" class="text-gray-400 mt-2">データ同期中...</p>
+            <p id="user-info" class="text-gray-400 mt-2">データ同期準備中...</p>
         </header>
 
         <!-- 新しいレビュー投稿フォーム -->
@@ -38,7 +38,6 @@
                     <input type="text" id="artist-name" required 
                            class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 placeholder-gray-400 transition">
                 </div>
-                <!-- UPDATED: カバー画像ファイル入力 -->
                 <div>
                     <label for="album-image-file" class="block text-sm font-medium text-gray-300 mb-1">カバー画像ファイル (任意)</label>
                     <input type="file" id="album-image-file" accept="image/*"
@@ -60,7 +59,7 @@
                     <textarea id="review-text" rows="4" required 
                               class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 placeholder-gray-400 transition"></textarea>
                 </div>
-                <button type="submit" 
+                <button type="submit" id="submit-button"
                         class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition transform hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-900">
                     レビューを投稿
                 </button>
@@ -83,7 +82,7 @@
                 <!-- レビューカードがここに挿入されます -->
             </div>
             <p id="no-reviews-message" class="text-center text-gray-500 mt-8 hidden">
-                まだレビューがありません。最初のレビューを書いてみましょう！
+                データ接続を待っています...
             </p>
         </section>
     </div>
@@ -95,7 +94,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, orderBy, limit, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firestoreのログレベルを設定 (デバッグ用)
@@ -104,12 +103,12 @@
         // グローバル変数として設定（コード全体で参照可能にする）
         let db = null;
         let auth = null;
-        let currentUserId = null;
-        let reviewsCollectionRef = null;
-        let allReviewsData = []; // フィルタリング前の全データを保持
+        let allReviewsData = []; 
+        let isFirestoreReady = false; // Firestoreの準備状態フラグ
 
         // 必須のグローバル変数を取得
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // 環境変数がない場合は空のオブジェクトを設定する
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
@@ -124,17 +123,24 @@
         const albumImageFileInput = document.getElementById('album-image-file');
         const searchArtistInput = document.getElementById('search-artist');
         const userInfoDisplay = document.getElementById('user-info');
-
+        const submitButton = document.getElementById('submit-button');
 
         // ==========================================================
         // Firebase初期化と認証
         // ==========================================================
         async function initializeFirebase() {
+            // 🚨 修正点: 設定がない場合はエラーを投げずに、処理を中止しメッセージを表示する
+            if (Object.keys(firebaseConfig).length === 0 || initialAuthToken === null) {
+                console.error("Firebase environment variables are missing. Data synchronization disabled.");
+                userInfoDisplay.textContent = '【注意】Firebase設定が不足しています。レビューデータは共有されません。';
+                noReviewsMessage.textContent = 'Firebase設定が不足しているため、レビューの同期はできません。';
+                submitButton.disabled = true; // フォームを無効化
+                submitButton.textContent = 'データ同期ができません';
+                isFirestoreReady = false;
+                return; // Firebaseの初期化を停止
+            }
+            
             try {
-                if (Object.keys(firebaseConfig).length === 0) {
-                     throw new Error("Firebase configuration is missing.");
-                }
-
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -143,48 +149,44 @@
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
+                    // 環境変数がない場合はここには来ないが、念のため
                     await signInAnonymously(auth);
                 }
 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        currentUserId = user.uid;
-                        // データを公開コレクションに保存するため、このアプリではUserIDは表示しません
-                        userInfoDisplay.textContent = '同期完了：全てのデバイスでデータが共有されます。';
-                        
                         // 全ユーザーで共有する公開パスを設定
-                        // Path: /artifacts/{appId}/public/data/reviews
-                        reviewsCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
-                        setupRealtimeListener();
+                        const reviewsCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
+                        setupRealtimeListener(reviewsCollectionRef);
+                        isFirestoreReady = true;
 
                     } else {
-                        currentUserId = null;
-                        userInfoDisplay.textContent = 'エラー: 認証に失敗しました。';
+                        userInfoDisplay.textContent = 'エラー: 認証に失敗しました。データ同期はできません。';
+                        submitButton.disabled = true;
+                        isFirestoreReady = false;
                     }
                 });
 
             } catch (error) {
                 console.error("Firebase Initialization/Authentication Error:", error);
-                userInfoDisplay.textContent = `エラーが発生しました: ${error.message}`;
+                userInfoDisplay.textContent = `エラーが発生しました: ${error.message} データ同期はできません。`;
+                submitButton.disabled = true;
+                isFirestoreReady = false;
             }
         }
 
         /**
          * Firestoreのリアルタイムリスナーを設定する
          */
-        function setupRealtimeListener() {
-            if (!reviewsCollectionRef) return;
-
-            // クエリ: タイムスタンプの降順で取得 (orderByは使用しない代わりにJSでソート)
+        function setupRealtimeListener(reviewsCollectionRef) {
+            
             const reviewsQuery = query(reviewsCollectionRef);
             
-            // リアルタイムリスナー
             onSnapshot(reviewsQuery, (snapshot) => {
+                // データのマッピングとタイムスタンプの処理
                 allReviewsData = snapshot.docs.map(doc => {
                     const data = doc.data();
-                    // タイムスタンプを数値に変換（FirestoreのTimestampオブジェクト対策）
-                    const timestamp = data.timestamp ? (data.timestamp.seconds * 1000) : data.id;
-
+                    const timestamp = data.timestamp ? (data.timestamp.seconds * 1000) : Date.now(); // タイムスタンプがない場合は現在時刻
                     return {
                         id: doc.id,
                         title: data.title,
@@ -197,6 +199,7 @@
                 });
                 
                 renderReviews(); // データが更新されたら再描画
+                userInfoDisplay.textContent = 'データ同期完了：すべてのデバイスでデータが共有されます。';
                 showMessage('レビューデータが同期されました。', 'bg-blue-900 text-blue-300');
             }, (error) => {
                 console.error("Firestore real-time listener error:", error);
@@ -218,8 +221,7 @@
                     resolve(null);
                     return;
                 }
-                // 容量オーバー対策のため、Base64文字列の長さチェック（簡易的な対策）
-                if (file.size > 500 * 1024) { // 500KB以上を制限
+                if (file.size > 500 * 1024) { 
                     showMessage('画像ファイルが大きすぎます（500KB以下推奨）。画像を添付せずに投稿しました。', 'bg-yellow-900 text-yellow-300');
                     resolve(null);
                     return;
@@ -341,6 +343,9 @@
          * 編集モードの切り替えを処理する
          */
         function handleEditClick(event) {
+            // Firestoreが準備できていない場合は処理しない
+            if (!isFirestoreReady) return showMessage('データ接続ができていないため、編集できません。', 'bg-red-900 text-red-300');
+
             const reviewId = event.target.dataset.id;
             const reviewCard = event.target.closest('.review-card');
             const review = allReviewsData.find(r => r.id === reviewId);
@@ -405,10 +410,10 @@
         async function handleSaveEdit(event) {
             event.preventDefault();
 
-            if (!reviewsCollectionRef) return showMessage('データベース接続エラーです。', 'bg-red-900 text-red-300');
+            if (!isFirestoreReady) return showMessage('データ接続ができていないため、保存できません。', 'bg-red-900 text-red-300');
 
             const reviewId = event.target.dataset.id;
-            const reviewDocRef = doc(reviewsCollectionRef, reviewId);
+            const reviewDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME, reviewId);
             
             const formElements = event.target.elements;
             const newTitle = formElements.title.value.trim();
@@ -433,12 +438,11 @@
                 rating: newRating,
                 reviewText: newReviewText,
                 base64Image: base64Image || null,
-                timestamp: serverTimestamp() // Firestoreのタイムスタンプを更新
+                timestamp: serverTimestamp() 
             };
 
             try {
                 await updateDoc(reviewDocRef, updateData);
-                // onSnapshotが自動的に画面を更新するため、ここではメッセージ表示のみ
                 showMessage('レビューが正常に更新されました！', 'bg-green-900 text-green-300');
             } catch (error) {
                 console.error("Error updating document:", error);
@@ -452,8 +456,9 @@
         async function handleFormSubmit(event) {
             event.preventDefault();
 
-            if (!reviewsCollectionRef) return showMessage('データベース接続エラーです。', 'bg-red-900 text-red-300');
+            if (!isFirestoreReady) return showMessage('データ接続ができていないため、投稿できません。', 'bg-red-900 text-red-300');
 
+            const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
             const title = document.getElementById('album-title').value.trim();
             const artist = document.getElementById('artist-name').value.trim();
             const rating = parseFloat(document.getElementById('rating').value);
@@ -478,16 +483,15 @@
                 base64Image: base64Image || null,
                 rating,
                 reviewText,
-                timestamp: serverTimestamp() // Firestoreのサーバータイムスタンプを使用
+                timestamp: serverTimestamp() 
             };
 
             try {
-                await addDoc(reviewsCollectionRef, newReview);
+                await addDoc(collectionRef, newReview);
                 
                 // フォームをリセット
                 form.reset();
                 
-                // onSnapshotが自動で描画するため、ここではメッセージ表示のみ
                 showMessage('レビューが正常に投稿されました！', 'bg-green-900 text-green-300');
             } catch (error) {
                 console.error("Error adding document:", error);
@@ -499,14 +503,14 @@
          * レビューの削除を処理する
          */
         function handleDelete(event) {
+            if (!isFirestoreReady) return showMessage('データ接続ができていないため、削除できません。', 'bg-red-900 text-red-300');
+
             const reviewId = event.target.dataset.id;
             
             showCustomModal("レビューを削除しますか？", async () => {
-                if (!reviewsCollectionRef) return showMessage('データベース接続エラーです。', 'bg-red-900 text-red-300');
                 try {
-                    const reviewDocRef = doc(reviewsCollectionRef, reviewId);
+                    const reviewDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME, reviewId);
                     await deleteDoc(reviewDocRef);
-                    // onSnapshotが自動で描画するため、ここではメッセージ表示のみ
                     showMessage('レビューが削除されました。', 'bg-red-900 text-red-300');
                 } catch (error) {
                     console.error("Error deleting document:", error);
@@ -556,7 +560,7 @@
         }
 
         function showCustomModal(message, onConfirm) {
-            if (!modalElement) createCustomModal(); // 念のため再作成
+            if (!modalElement) createCustomModal();
             
             const modal = modalElement;
             document.getElementById('modal-text').textContent = message;
@@ -564,10 +568,6 @@
             const confirmBtn = document.getElementById('modal-confirm');
             const cancelBtn = document.getElementById('modal-cancel');
 
-            // 古いイベントリスナーのクリーンアップは不要、クローンで対応
-            // ただし、毎回クローン/置換するよりも、addEventListener/removeEventListenerで管理した方がパフォーマンスが良いですが、
-            // 既存ロジックを尊重しつつ、イベントの重複を防ぐために単純に一度だけ設定します。
-            
             // 確実なイベントリスナー再設定
             const handleConfirm = () => {
                 onConfirm();
@@ -582,14 +582,12 @@
                 cancelBtn.removeEventListener('click', handleCancel);
             };
 
-            // イベントリスナーを再設定する前に、既存リスナーを削除 (※これはより確実な方法です)
             confirmBtn.onclick = null;
             cancelBtn.onclick = null;
             
             confirmBtn.addEventListener('click', handleConfirm);
             cancelBtn.addEventListener('click', handleCancel);
 
-            // 表示
             modal.classList.remove('hidden');
         }
 
