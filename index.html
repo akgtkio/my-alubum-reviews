@@ -21,6 +21,7 @@
             <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight text-indigo-400">
                 マイ・アルバム・レビュー
             </h1>
+            <!-- ユーザー同期ステータス表示エリア -->
             <p id="user-info" class="text-gray-400 mt-2">データ同期準備中...</p>
         </header>
 
@@ -59,9 +60,9 @@
                     <textarea id="review-text" rows="4" required 
                               class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 placeholder-gray-400 transition"></textarea>
                 </div>
-                <button type="submit" id="submit-button"
-                        class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition transform hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-900">
-                    レビューを投稿
+                <button type="submit" id="submit-button" disabled
+                        class="w-full py-3 px-4 bg-gray-600 text-white font-semibold rounded-lg shadow-md transition transform focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 cursor-not-allowed">
+                    接続中...
                 </button>
             </form>
             <div id="message-box" class="mt-4 p-3 rounded-lg text-center hidden"></div>
@@ -81,7 +82,7 @@
             <div id="reviews-list" class="space-y-6">
                 <!-- レビューカードがここに挿入されます -->
             </div>
-            <p id="no-reviews-message" class="text-center text-gray-500 mt-8 hidden">
+            <p id="no-reviews-message" class="text-center text-gray-500 mt-8">
                 データ接続を待っています...
             </p>
         </section>
@@ -94,21 +95,19 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firestoreのログレベルを設定 (デバッグ用)
         setLogLevel('Debug');
 
-        // グローバル変数として設定（コード全体で参照可能にする）
+        // グローバル変数
         let db = null;
-        let auth = null;
         let allReviewsData = []; 
-        let isFirestoreReady = false; // Firestoreの準備状態フラグ
+        let isFirestoreReady = false; 
 
         // 必須のグローバル変数を取得
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        // 環境変数がない場合は空のオブジェクトを設定する
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
@@ -129,40 +128,44 @@
         // Firebase初期化と認証
         // ==========================================================
         async function initializeFirebase() {
-            // 🚨 修正点: 設定がない場合はエラーを投げずに、処理を中止しメッセージを表示する
             if (Object.keys(firebaseConfig).length === 0 || initialAuthToken === null) {
                 console.error("Firebase environment variables are missing. Data synchronization disabled.");
                 userInfoDisplay.textContent = '【注意】Firebase設定が不足しています。レビューデータは共有されません。';
                 noReviewsMessage.textContent = 'Firebase設定が不足しているため、レビューの同期はできません。';
-                submitButton.disabled = true; // フォームを無効化
+                submitButton.disabled = true;
                 submitButton.textContent = 'データ同期ができません';
                 isFirestoreReady = false;
-                return; // Firebaseの初期化を停止
+                return;
             }
             
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
-                auth = getAuth(app);
+                const auth = getAuth(app); // authはこのスコープ内でのみ使用
                 
                 // 認証ロジック
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
-                    // 環境変数がない場合はここには来ないが、念のため
                     await signInAnonymously(auth);
                 }
 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        // 全ユーザーで共有する公開パスを設定
                         const reviewsCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
                         setupRealtimeListener(reviewsCollectionRef);
                         isFirestoreReady = true;
+                        
+                        // 準備完了後、投稿ボタンを有効化
+                        submitButton.disabled = false;
+                        submitButton.textContent = 'レビューを投稿';
+                        submitButton.classList.replace('bg-gray-600', 'bg-indigo-600');
+                        submitButton.classList.add('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
 
                     } else {
                         userInfoDisplay.textContent = 'エラー: 認証に失敗しました。データ同期はできません。';
                         submitButton.disabled = true;
+                        submitButton.textContent = '認証失敗';
                         isFirestoreReady = false;
                     }
                 });
@@ -171,6 +174,7 @@
                 console.error("Firebase Initialization/Authentication Error:", error);
                 userInfoDisplay.textContent = `エラーが発生しました: ${error.message} データ同期はできません。`;
                 submitButton.disabled = true;
+                submitButton.textContent = '初期化エラー';
                 isFirestoreReady = false;
             }
         }
@@ -183,10 +187,9 @@
             const reviewsQuery = query(reviewsCollectionRef);
             
             onSnapshot(reviewsQuery, (snapshot) => {
-                // データのマッピングとタイムスタンプの処理
                 allReviewsData = snapshot.docs.map(doc => {
                     const data = doc.data();
-                    const timestamp = data.timestamp ? (data.timestamp.seconds * 1000) : Date.now(); // タイムスタンプがない場合は現在時刻
+                    const timestamp = data.timestamp ? (data.timestamp.seconds * 1000) : Date.now();
                     return {
                         id: doc.id,
                         title: data.title,
@@ -198,7 +201,7 @@
                     };
                 });
                 
-                renderReviews(); // データが更新されたら再描画
+                renderReviews(); 
                 userInfoDisplay.textContent = 'データ同期完了：すべてのデバイスでデータが共有されます。';
                 showMessage('レビューデータが同期されました。', 'bg-blue-900 text-blue-300');
             }, (error) => {
@@ -222,7 +225,7 @@
                     return;
                 }
                 if (file.size > 500 * 1024) { 
-                    showMessage('画像ファイルが大きすぎます（500KB以下推奨）。画像を添付せずに投稿しました。', 'bg-yellow-900 text-yellow-300');
+                    showMessage('画像ファイルが大きすぎます（500KB以下推奨）。画像を添付せずに投稿します。', 'bg-yellow-900 text-yellow-300');
                     resolve(null);
                     return;
                 }
@@ -343,7 +346,6 @@
          * 編集モードの切り替えを処理する
          */
         function handleEditClick(event) {
-            // Firestoreが準備できていない場合は処理しない
             if (!isFirestoreReady) return showMessage('データ接続ができていないため、編集できません。', 'bg-red-900 text-red-300');
 
             const reviewId = event.target.dataset.id;
@@ -395,10 +397,8 @@
                 </form>
             `;
             
-            // カードの内容を編集フォームに置き換え
             reviewCard.innerHTML = editFormHtml;
             
-            // イベントリスナーを設定
             const editForm = reviewCard.querySelector('.edit-form');
             editForm.addEventListener('submit', handleSaveEdit);
             reviewCard.querySelector('.cancel-edit-btn').addEventListener('click', renderReviews);
@@ -410,7 +410,11 @@
         async function handleSaveEdit(event) {
             event.preventDefault();
 
-            if (!isFirestoreReady) return showMessage('データ接続ができていないため、保存できません。', 'bg-red-900 text-red-300');
+            // 🚨 強化されたチェック
+            if (!isFirestoreReady || !db) {
+                console.error("Database not ready for update.");
+                return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
+            }
 
             const reviewId = event.target.dataset.id;
             const reviewDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME, reviewId);
@@ -427,7 +431,6 @@
                 return;
             }
             
-            // Base64変換を待つ
             const base64Image = newImageFile 
                 ? await fileToBase64(newImageFile) 
                 : allReviewsData.find(r => r.id === reviewId)?.base64Image;
@@ -446,7 +449,7 @@
                 showMessage('レビューが正常に更新されました！', 'bg-green-900 text-green-300');
             } catch (error) {
                 console.error("Error updating document:", error);
-                showMessage('レビューの更新に失敗しました。', 'bg-red-900 text-red-300');
+                showMessage(`レビューの更新に失敗しました: ${error.message}`, 'bg-red-900 text-red-300');
             }
         }
 
@@ -456,7 +459,11 @@
         async function handleFormSubmit(event) {
             event.preventDefault();
 
-            if (!isFirestoreReady) return showMessage('データ接続ができていないため、投稿できません。', 'bg-red-900 text-red-300');
+            // 🚨 強化されたチェック
+            if (!isFirestoreReady || !db) {
+                console.error("Database not ready for submit.");
+                return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
+            }
 
             const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
             const title = document.getElementById('album-title').value.trim();
@@ -474,7 +481,6 @@
                 return;
             }
 
-            // 画像ファイルをBase64に変換（非同期処理）
             const base64Image = await fileToBase64(imageFile);
 
             const newReview = {
@@ -487,15 +493,24 @@
             };
 
             try {
+                // 投稿処理中はボタンを一時的に無効化し、二重投稿を防ぐ
+                submitButton.disabled = true;
+                submitButton.textContent = '投稿中...';
+
                 await addDoc(collectionRef, newReview);
                 
-                // フォームをリセット
                 form.reset();
-                
                 showMessage('レビューが正常に投稿されました！', 'bg-green-900 text-green-300');
+
             } catch (error) {
                 console.error("Error adding document:", error);
-                showMessage('レビューの投稿に失敗しました。', 'bg-red-900 text-red-300');
+                showMessage(`レビューの投稿に失敗しました: ${error.message}`, 'bg-red-900 text-red-300');
+            } finally {
+                // 処理完了後、ボタンを元に戻す (isFirestoreReadyがtrueであることを前提)
+                if (isFirestoreReady) {
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'レビューを投稿';
+                }
             }
         }
 
@@ -503,7 +518,10 @@
          * レビューの削除を処理する
          */
         function handleDelete(event) {
-            if (!isFirestoreReady) return showMessage('データ接続ができていないため、削除できません。', 'bg-red-900 text-red-300');
+            if (!isFirestoreReady || !db) {
+                console.error("Database not ready for delete.");
+                return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
+            }
 
             const reviewId = event.target.dataset.id;
             
@@ -514,7 +532,7 @@
                     showMessage('レビューが削除されました。', 'bg-red-900 text-red-300');
                 } catch (error) {
                     console.error("Error deleting document:", error);
-                    showMessage('レビューの削除に失敗しました。', 'bg-red-900 text-red-300');
+                    showMessage(`レビューの削除に失敗しました: ${error.message}`, 'bg-red-900 text-red-300');
                 }
             });
         }
@@ -528,7 +546,7 @@
             messageBox.classList.remove('hidden');
             setTimeout(() => {
                 messageBox.classList.add('hidden');
-            }, 3000); // 3秒後に非表示
+            }, 3000); 
         }
         
         // ==========================================================
@@ -568,7 +586,6 @@
             const confirmBtn = document.getElementById('modal-confirm');
             const cancelBtn = document.getElementById('modal-cancel');
 
-            // 確実なイベントリスナー再設定
             const handleConfirm = () => {
                 onConfirm();
                 modal.classList.add('hidden');
@@ -605,7 +622,7 @@
         // ページロード時に実行
         document.addEventListener('DOMContentLoaded', () => {
             createCustomModal(); 
-            initializeFirebase(); // Firebaseの初期化とデータ同期を開始
+            initializeFirebase();
         });
 
     </script>
