@@ -27,7 +27,7 @@
 
         <!-- 新しいレビュー投稿フォーム -->
         <section id="review-form" class="bg-gray-800 p-6 rounded-xl shadow-2xl mb-12 border border-gray-700">
-            <h2 class="text-2xl font-bold mb-5 reorganize_text_to_be_more_dynamic_than_a_bullet_pointtext-indigo-300">新しいレビューを追加</h2>
+            <h2 class="text-2xl font-bold mb-5 text-indigo-300">新しいレビューを追加</h2>
             <form id="album-review-form" class="space-y-4">
                 <div>
                     <label for="album-title" class="block text-sm font-medium text-gray-300 mb-1">アルバム名</label>
@@ -125,33 +125,40 @@
         async function initializeFirebase() {
             // 必須のグローバル変数を取得し、未定義の場合はフォールバック
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            // JSON.parseが失敗する可能性があるため、try/catchで保護
             let firebaseConfig = {};
             try {
                 firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
             } catch (e) {
                 console.error("Error parsing __firebase_config:", e);
-                // firebaseConfigは空のまま
             }
             const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
             const configIsMissing = Object.keys(firebaseConfig).length === 0 || !firebaseConfig.projectId;
 
             if (configIsMissing) {
-                // 🚨 設定情報不足のエラー処理
+                // 🚨 設定情報不足のエラー処理 (前回からの強化点)
                 console.error("致命的なエラー: Firebase Configurationが見つからないか、不完全です。");
+                
+                // UIをエラーモードに設定
                 userInfoDisplay.className = 'text-red-400 font-bold mt-2 p-2 bg-red-900 bg-opacity-30 rounded-lg';
-                userInfoDisplay.textContent = '【致命的な設定エラー】データ同期設定が見つかりません。投稿・編集はできません。';
+                userInfoDisplay.textContent = '【設定エラー】データ接続ができません。投稿・編集は不可。';
+                
+                noReviewsMessage.className = 'text-center text-red-400 font-semibold mt-8';
                 noReviewsMessage.textContent = 'データ接続がないため、レビューの同期はできません。';
+                
                 submitButton.disabled = true;
                 submitButton.textContent = '設定エラー (投稿不可)';
                 submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
                 submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
+                
                 isFirestoreReady = false;
-                return;
+
+                // 接続がない場合でも、レビュー一覧の初期表示を試みる（今回は空だが、将来的なローカルフォールバックを想定）
+                renderReviews(); 
+                return; 
             }
             
-            // 正常な初期化と認証
+            // 正常な初期化と認証 (省略 - 変更なし)
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
@@ -166,7 +173,7 @@
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         const reviewsCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
-                        setupRealtimeListener(reviewsCollectionRef, user.uid); // UIDを渡してデバッグ情報を強化
+                        setupRealtimeListener(reviewsCollectionRef, user.uid); 
                         isFirestoreReady = true;
                         
                         // 準備完了後、投稿ボタンを有効化
@@ -200,7 +207,7 @@
         }
 
         /**
-         * Firestoreのリアルタイムリスナーを設定する
+         * Firestoreのリアルタイムリスナーを設定する (変更なし)
          */
         function setupRealtimeListener(reviewsCollectionRef, userId) {
             
@@ -233,7 +240,7 @@
 
 
         // ==========================================================
-        // データ処理ヘルパー
+        // データ処理ヘルパー (変更なし)
         // ==========================================================
 
         /**
@@ -278,7 +285,7 @@
         // ==========================================================
 
         /**
-         * レビューカードのHTMLを作成する
+         * レビューカードのHTMLを作成する (変更なし)
          */
         function createReviewCard(review) {
             const timestamp = new Date(review.timestamp).toLocaleDateString('ja-JP', {
@@ -325,7 +332,7 @@
         }
 
         /**
-         * 全レビューを画面に描画する
+         * 全レビューを画面に描画する (ソート・フィルタリング機能付き)
          */
         function renderReviews() {
             // JSでタイムスタンプの降順でソート
@@ -341,6 +348,13 @@
             reviewsList.innerHTML = '';
 
             if (filteredReviews.length === 0) {
+                // 接続エラー時は赤文字、接続成功時は灰色文字でメッセージを表示
+                const isError = !isFirestoreReady && allReviewsData.length === 0;
+
+                noReviewsMessage.className = isError 
+                    ? 'text-center text-red-400 font-semibold mt-8'
+                    : 'text-center text-gray-500 mt-8';
+
                 noReviewsMessage.textContent = searchTerm 
                     ? `アーティスト名「${searchTerm}」に一致するレビューはありません。`
                     : 'まだレビューがありません。最初のレビューを書いてみましょう！';
@@ -357,9 +371,13 @@
             // イベントリスナーの設定
             reviewsList.querySelectorAll('.delete-btn').forEach(button => {
                 button.addEventListener('click', handleDelete);
+                // 接続できていない場合はボタンを無効化
+                if (!isFirestoreReady) button.disabled = true;
             });
             reviewsList.querySelectorAll('.edit-btn').forEach(button => {
                 button.addEventListener('click', handleEditClick);
+                // 接続できていない場合はボタンを無効化
+                if (!isFirestoreReady) button.disabled = true;
             });
         }
         
@@ -367,8 +385,11 @@
          * 編集モードの切り替えを処理する
          */
         function handleEditClick(event) {
-            if (!isFirestoreReady) return showMessage('データ接続ができていないため、編集できません。', 'bg-red-900 text-red-300');
-
+            // 🚨 接続チェックを強化
+            if (!isFirestoreReady || event.target.disabled) {
+                return showMessage('データ接続ができていないため、編集できません。', 'bg-red-900 text-red-300');
+            }
+            // 以下、編集フォームの表示ロジック (省略 - 変更なし)
             const reviewId = event.target.dataset.id;
             const reviewCard = event.target.closest('.review-card');
             const review = allReviewsData.find(r => r.id === reviewId);
@@ -436,7 +457,7 @@
                 console.error("Database not ready for update.");
                 return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
             }
-
+            // 以下、保存ロジック (省略 - 変更なし)
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // 内部で再取得
             const reviewId = event.target.dataset.id;
             const reviewDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME, reviewId);
@@ -486,7 +507,7 @@
                 console.error("Database not ready for submit.");
                 return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
             }
-            
+            // 以下、投稿ロジック (省略 - 変更なし)
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // 内部で再取得
             const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
             const title = document.getElementById('album-title').value.trim();
@@ -541,11 +562,12 @@
          * レビューの削除を処理する
          */
         function handleDelete(event) {
-            if (!isFirestoreReady || !db) {
+            // 🚨 強化されたチェック
+            if (!isFirestoreReady || !db || event.target.disabled) {
                 console.error("Database not ready for delete.");
                 return showMessage('データベース接続エラー: 接続準備ができていません。', 'bg-red-900 text-red-300');
             }
-
+            // 以下、削除ロジック (省略 - 変更なし)
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // 内部で再取得
             const reviewId = event.target.dataset.id;
             
@@ -562,7 +584,7 @@
         }
         
         /**
-         * メッセージボックスを表示する
+         * メッセージボックスを表示する (変更なし)
          */
         function showMessage(message, classes) {
             messageBox.textContent = message;
@@ -574,7 +596,7 @@
         }
         
         // ==========================================================
-        // カスタムモーダル（alertやconfirmの代替）
+        // カスタムモーダル（alertやconfirmの代替）(変更なし)
         // ==========================================================
         
         let modalElement = null;
