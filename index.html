@@ -22,12 +22,12 @@
                 マイ・アルバム・レビュー
             </h1>
             <!-- ユーザー同期ステータス表示エリア -->
-            <p id="user-info" class="text-gray-400 mt-2">データ同期準備中...</p>
+            <p id="user-info" class="text-gray-400 mt-2">Firebase設定をチェック中...</p>
         </header>
 
         <!-- 新しいレビュー投稿フォーム -->
         <section id="review-form" class="bg-gray-800 p-6 rounded-xl shadow-2xl mb-12 border border-gray-700">
-            <h2 class="text-2xl font-bold mb-5 text-indigo-300">新しいレビューを追加</h2>
+            <h2 class="text-2xl font-bold mb-5 reorganize_text_to_be_more_dynamic_than_a_bullet_pointtext-indigo-300">新しいレビューを追加</h2>
             <form id="album-review-form" class="space-y-4">
                 <div>
                     <label for="album-title" class="block text-sm font-medium text-gray-300 mb-1">アルバム名</label>
@@ -83,7 +83,7 @@
                 <!-- レビューカードがここに挿入されます -->
             </div>
             <p id="no-reviews-message" class="text-center text-gray-500 mt-8">
-                データ接続を待っています...
+                Firebase設定をチェック中...
             </p>
         </section>
     </div>
@@ -128,13 +128,21 @@
         // Firebase初期化と認証
         // ==========================================================
         async function initializeFirebase() {
+            console.log("--- Firebase Initialization Debug Start ---");
+            console.log("App ID:", appId);
+            console.log("Firebase Config:", Object.keys(firebaseConfig).length > 0 ? "Received" : "Missing/Empty");
+            console.log("Initial Auth Token Status:", initialAuthToken ? "Received" : "Missing (Attempting Anonymous Sign-In if possible)");
+            console.log("--- Firebase Initialization Debug End ---");
+
             // 🚨 Check 1: Missing environment variables (設定不足)
-            if (Object.keys(firebaseConfig).length === 0 || initialAuthToken === null) {
-                console.error("Firebase environment variables are missing. Data synchronization disabled.");
-                userInfoDisplay.textContent = '【警告】Firebase接続情報がありません。レビューは保存・共有されません。';
-                noReviewsMessage.textContent = 'Firebase接続情報がないため、レビューの同期はできません。ページをリロードしてみてください。';
+            const configIsMissing = Object.keys(firebaseConfig).length === 0;
+
+            if (configIsMissing) {
+                console.error("Firebase Configuration is empty. Cannot initialize Firebase.");
+                userInfoDisplay.textContent = '【致命的なエラー】Firebase接続設定情報が不足しています。';
+                noReviewsMessage.textContent = 'Firebaseの設定情報がないため、レビューの同期はできません。';
                 submitButton.disabled = true;
-                submitButton.textContent = '設定不足 (投稿不可)'; // 修正後のメッセージ
+                submitButton.textContent = '致命的エラー (投稿不可)';
                 submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
                 submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
                 isFirestoreReady = false;
@@ -169,7 +177,7 @@
                         // Check 2: Authentication failed (認証失敗)
                         userInfoDisplay.textContent = 'エラー: 認証に失敗しました。データ同期はできません。';
                         submitButton.disabled = true;
-                        submitButton.textContent = '認証失敗 - 投稿不可'; // 修正後のメッセージ
+                        submitButton.textContent = '認証失敗 - 投稿不可'; 
                         submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
                         submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
                         isFirestoreReady = false;
@@ -181,7 +189,7 @@
                 console.error("Firebase Initialization/Authentication Error:", error);
                 userInfoDisplay.textContent = `エラーが発生しました: ${error.message} データ同期はできません。`;
                 submitButton.disabled = true;
-                submitButton.textContent = '初期化エラー - 投稿不可'; // 修正後のメッセージ
+                submitButton.textContent = '初期化エラー - 投稿不可'; 
                 submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
                 submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
                 isFirestoreReady = false;
