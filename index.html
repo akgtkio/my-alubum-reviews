@@ -128,12 +128,15 @@
         // Firebase初期化と認証
         // ==========================================================
         async function initializeFirebase() {
+            // 🚨 Check 1: Missing environment variables (設定不足)
             if (Object.keys(firebaseConfig).length === 0 || initialAuthToken === null) {
                 console.error("Firebase environment variables are missing. Data synchronization disabled.");
-                userInfoDisplay.textContent = '【注意】Firebase設定が不足しています。レビューデータは共有されません。';
-                noReviewsMessage.textContent = 'Firebase設定が不足しているため、レビューの同期はできません。';
+                userInfoDisplay.textContent = '【警告】Firebase接続情報がありません。レビューは保存・共有されません。';
+                noReviewsMessage.textContent = 'Firebase接続情報がないため、レビューの同期はできません。ページをリロードしてみてください。';
                 submitButton.disabled = true;
-                submitButton.textContent = 'データ同期ができません';
+                submitButton.textContent = '設定不足 (投稿不可)'; // 修正後のメッセージ
+                submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
+                submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
                 isFirestoreReady = false;
                 return;
             }
@@ -141,7 +144,7 @@
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
-                const auth = getAuth(app); // authはこのスコープ内でのみ使用
+                const auth = getAuth(app); 
                 
                 // 認証ロジック
                 if (initialAuthToken) {
@@ -163,18 +166,24 @@
                         submitButton.classList.add('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
 
                     } else {
+                        // Check 2: Authentication failed (認証失敗)
                         userInfoDisplay.textContent = 'エラー: 認証に失敗しました。データ同期はできません。';
                         submitButton.disabled = true;
-                        submitButton.textContent = '認証失敗';
+                        submitButton.textContent = '認証失敗 - 投稿不可'; // 修正後のメッセージ
+                        submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
+                        submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
                         isFirestoreReady = false;
                     }
                 });
 
             } catch (error) {
+                // Check 3: Initialization error (初期化エラー)
                 console.error("Firebase Initialization/Authentication Error:", error);
                 userInfoDisplay.textContent = `エラーが発生しました: ${error.message} データ同期はできません。`;
                 submitButton.disabled = true;
-                submitButton.textContent = '初期化エラー';
+                submitButton.textContent = '初期化エラー - 投稿不可'; // 修正後のメッセージ
+                submitButton.classList.replace('bg-indigo-600', 'bg-gray-600');
+                submitButton.classList.remove('hover:bg-indigo-700', 'hover:scale-[1.01]', 'cursor-pointer');
                 isFirestoreReady = false;
             }
         }
